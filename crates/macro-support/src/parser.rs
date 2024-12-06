@@ -13,7 +13,7 @@ use syn::ext::IdentExt;
 use syn::parse::{Parse, ParseStream, Result as SynResult};
 use syn::spanned::Spanned;
 use syn::visit_mut::VisitMut;
-use syn::{ItemFn, Lit, MacroDelimiter, ReturnType};
+use syn::{ItemFn, Lit, MacroDelimiter, ReturnType, Type, TypePath, Field};
 
 use crate::ClassMarker;
 
@@ -51,6 +51,7 @@ struct AttributeParseState {
 
 /// Parsed attributes from a `#[wasm_bindgen(..)]`.
 #[cfg_attr(feature = "extra-traits", derive(Debug))]
+#[derive(Debug)]
 pub struct BindgenAttrs {
     /// List of parsed attributes
     pub attrs: Vec<(Cell<bool>, BindgenAttr)>,
@@ -109,6 +110,7 @@ macro_rules! methods {
         $(methods!(@method $name, $variant($($contents)*));)*
 
         fn enforce_used(self) -> Result<(), Diagnostic> {
+            //println!("Enforceused");
             // Account for the fact this method was called
             ATTRS.with(|state| state.checks.set(state.checks.get() + 1));
 
@@ -125,7 +127,8 @@ macro_rules! methods {
             Diagnostic::from_vec(errors)
         }
 
-        fn check_used(self) {
+        pub(crate) fn check_used(self) {
+            //println!("Checkused");
             // Account for the fact this method was called
             ATTRS.with(|state| {
                 state.checks.set(state.checks.get() + 1);
@@ -147,7 +150,7 @@ macro_rules! methods {
     };
 
     (@method $name:ident, $variant:ident(Span, String, Span)) => {
-        fn $name(&self) -> Option<(&str, Span)> {
+        pub(crate) fn $name(&self) -> Option<(&str, Span)> {
             self.attrs
                 .iter()
                 .find_map(|a| match &a.1 {
@@ -191,7 +194,7 @@ macro_rules! methods {
 
     (@method $name:ident, $variant:ident($($other:tt)*)) => {
         #[allow(unused)]
-        fn $name(&self) -> Option<&$($other)*> {
+        pub(crate) fn $name(&self) -> Option<&$($other)*> {
             self.attrs
                 .iter()
                 .find_map(|a| match &a.1 {
@@ -206,14 +209,18 @@ macro_rules! methods {
 }
 
 impl BindgenAttrs {
+    pub(crate) fn find(attrs: &mut Vec<syn::Attribute>) -> Result<BindgenAttrs, Diagnostic> {
+        BindgenAttrs::find_custom(attrs, "wasm_bindgen")
+    }
+
     /// Find and parse the wasm_bindgen attributes.
-    fn find(attrs: &mut Vec<syn::Attribute>) -> Result<BindgenAttrs, Diagnostic> {
+    pub(crate) fn find_custom(attrs: &mut Vec<syn::Attribute>, bindgen_attr: &str) -> Result<BindgenAttrs, Diagnostic> {
         let mut ret = BindgenAttrs::default();
         loop {
             let pos = attrs
                 .iter()
                 .enumerate()
-                .find(|&(_, m)| m.path().segments[0].ident == "wasm_bindgen")
+                .find(|&(_, m)| m.path().segments[0].ident == bindgen_attr)
                 .map(|a| a.0);
             let pos = match pos {
                 Some(i) => i,
@@ -236,6 +243,25 @@ impl BindgenAttrs {
             attrs.check_used();
         }
     }
+
+    /*
+    fn pass_to_derive(self, attrs: &mut Vec<syn::Attribute>) { 
+        for (_, attr) in self.attrs {
+            match attr {
+                BindgenAttr::Getter(_, _) => todo!(),
+                BindgenAttr::Setter(_, _) => todo!(),
+                BindgenAttr::IndexingGetter(_) => todo!(),
+                BindgenAttr::IndexingSetter(_) => todo!(),
+                BindgenAttr::IndexingDeleter(_) => todo!(),
+                BindgenAttr::Readonly(_) => todo!(),
+                BindgenAttr::JsName(_, _, _) => todo!(),
+                // these shouldn't happen in struct
+                BindgenAttr::Catch(..) | BindgenAttr::Constructor(..) | BindgenAttr::Method(..) | BindgenAttr::StaticMethodOf(..)  | BindgenAttr::JsNamespace(..) | BindgenAttr::Module(..) | BindgenAttr::RawModule(..) | BindgenAttr::InlineJs(..) => () 
+            }
+            println!("ATTTTTTT: {attr:?}");
+        }
+    }
+    */
 
     fn get_thread_local(&self) -> Result<Option<ThreadLocal>, Diagnostic> {
         let mut thread_local = self.thread_local_v2().map(|_| ThreadLocal::V2);
@@ -284,6 +310,7 @@ macro_rules! gen_bindgen_attr {
     ($(($method:ident, $($variants:tt)*),)*) => {
         /// The possible attributes in the `#[wasm_bindgen]`.
         #[cfg_attr(feature = "extra-traits", derive(Debug))]
+        #[derive(Debug)]
         pub enum BindgenAttr {
             $($($variants)*,)*
         }
@@ -390,6 +417,7 @@ impl Parse for BindgenAttr {
 
         attrgen!(parsers);
 
+        println!("attr: {attr_string}");
         Err(original.error(if attr_string.starts_with('_') {
             "unknown attribute: it's safe to remove unused attributes entirely."
         } else {
@@ -413,7 +441,7 @@ impl Parse for AnyIdent {
 ///
 /// Used to convert syn tokens into an AST, that we can then use to generate glue code. The context
 /// (`Ctx`) is used to pass in the attributes from the `#[wasm_bindgen]`, if needed.
-trait ConvertToAst<Ctx> {
+pub(crate) trait ConvertToAst<Ctx> {
     /// What we are converting to.
     type Target;
     /// Convert into our target.
@@ -443,6 +471,8 @@ impl ConvertToAst<(&ast::Program, BindgenAttrs)> for &mut syn::ItemStruct {
             .unwrap_or(self.ident.unraw().to_string());
         let is_inspectable = attrs.inspectable().is_some();
         let getter_with_clone = attrs.getter_with_clone();
+        println!("S: {js_name}");
+
         for (i, field) in self.fields.iter_mut().enumerate() {
             match field.vis {
                 syn::Visibility::Public(..) => {}
@@ -458,6 +488,19 @@ impl ConvertToAst<(&ast::Program, BindgenAttrs)> for &mut syn::ItemStruct {
                 attrs.check_used();
                 continue;
             }
+
+            //let wasm_bindgen = &program.wasm_bindgen;
+
+            /*
+    field.attrs.insert(
+        0,
+        syn::Attribute {
+            pound_token: Default::default(),
+            style: syn::AttrStyle::Outer,
+            bracket_token: Default::default(),
+            meta: syn::parse_quote! { #wasm_bindgen::prelude::__wasm_bindgen_class_marker() },
+        },
+    );*/
 
             let js_field_name = match attrs.js_name() {
                 Some((name, _)) => name.to_string(),
@@ -1160,11 +1203,16 @@ impl<'a> MacroParse<(Option<BindgenAttrs>, &'a mut TokenStream)> for syn::Item {
                 });
             }
             syn::Item::Struct(mut s) => {
+                println!("encountered struct");
                 let opts = opts.unwrap_or_default();
-                program.structs.push((&mut s).convert((program, opts))?);
+                println!("preparse");
+                (&mut s).macro_parse(program, &opts).inspect_err(|e| println!("got E: {e:?}"))?;
+                println!("preemit");
                 s.to_tokens(tokens);
+                println!("okie?");
             }
             syn::Item::Impl(mut i) => {
+                println!("encountered impl");
                 let opts = opts.unwrap_or_default();
                 (&mut i).macro_parse(program, opts)?;
                 i.to_tokens(tokens);
@@ -1203,6 +1251,126 @@ impl<'a> MacroParse<(Option<BindgenAttrs>, &'a mut TokenStream)> for syn::Item {
     }
 }
 
+
+impl MacroParse<&BindgenAttrs> for &mut syn::ItemStruct {
+    fn macro_parse(self, program: &mut ast::Program, attrs: &BindgenAttrs) -> Result<(), Diagnostic> {
+        if !self.generics.params.is_empty() {
+            bail_span!(
+                self.generics,
+                "structs with #[wasm_bindgen] cannot have lifetime or \
+                 type parameters currently"
+            );
+        }
+
+        let js_name = attrs
+            .js_name()
+            .map(|s| s.0.to_string())
+            .unwrap_or(self.ident.unraw().to_string());
+        let is_inspectable = attrs.inspectable().is_some();
+        let getter_with_clone = attrs.getter_with_clone().is_some();
+        let wasm_bindgen = &program.wasm_bindgen;
+        //let wasm_bindgen_futures = &program.wasm_bindgen_futures;
+
+        self.attrs.insert(0, syn::Attribute {
+            pound_token: Default::default(),
+            style: syn::AttrStyle::Outer,
+            bracket_token: Default::default(),
+            meta: syn::parse_quote! { 
+                derive(#wasm_bindgen::prelude::BindgenedStruct)
+            }
+        });
+        self.attrs.insert(1, syn::Attribute {
+            pound_token: Default::default(),
+            style: syn::AttrStyle::Outer,
+            bracket_token: Default::default(),
+            meta: syn::parse_quote! { 
+                __wasm_bindgen_attrs(#js_name, #is_inspectable, #getter_with_clone, #wasm_bindgen)
+            }
+        });
+
+        let mut errors = Vec::new();
+        for field in self.fields.iter_mut() {
+            if let Err(e) = prepare_for_struct_recursion(field) {
+                errors.push(e);
+            }
+        }
+        Diagnostic::from_vec(errors)?;
+            //meta: syn::parse_quote! { #wasm_bindgen::prelude::__wasm_bindgen_class_marker(#class = #js_class, wasm_bindgen = #wasm_bindgen, wasm_bindgen_futures = #wasm_bindgen_futures) },
+
+        //println!("RS: {self:#?}");
+        Ok(())
+    }
+}
+
+struct IdentRenameVisitor<'a> {
+    from: &'a str,
+    to: &'a str,
+}
+
+impl syn::visit_mut::VisitMut for IdentRenameVisitor<'_> {
+    fn visit_ident_mut(&mut self, node: &mut Ident) {
+        println!("visiting {node}");
+        if *node == self.from {
+            *node = Ident::new(self.to, node.span());
+        }
+    }
+
+    fn visit_meta_list_mut(&mut self, node: &mut syn::MetaList) {
+        self.visit_path_mut(&mut node.path);
+        self.visit_macro_delimiter_mut(&mut node.delimiter);
+        
+        let tokens = node.tokens.clone();
+
+        node.tokens = tokens.into_iter().map(|mut n| {
+            match &mut n {
+                TokenTree::Ident(ref mut i) => self.visit_ident_mut(i),
+                _ => ()
+            };
+            n
+        }).collect();
+        //for token in &mut node.tokens { }
+    }
+}
+
+// TODO: rename to rename_attributes
+fn prepare_for_struct_recursion(field: &mut Field) -> Result<(), Diagnostic> {
+    println!("> {:?}", field.attrs);
+
+    for attr in &mut field.attrs {
+        IdentRenameVisitor { from: "wasm_bindgen", to: "__wasm_bindgen_attrs"}.visit_attribute_mut(attr);
+    }
+
+
+    /*
+    for attr in &mut field.attrs {
+        if attr.path().segments[0].ident == "cfg_attr" {
+            println!(">> {:#?}", attr);
+        }
+
+        if attr.path().segments[0].ident != "wasm_bindgen" {
+            continue;
+        }
+        match &mut attr.meta {
+            syn::Meta::List(syn::MetaList {
+                path,
+                delimiter: MacroDelimiter::Paren(_),
+                tokens,
+            }) => {
+                path.segments[0].ident = Ident::new("__wasm_bindgen_attrs", Span::call_site());
+            }
+            syn::Meta::Path(_) | syn::Meta::List(_) | syn::Meta::NameValue(_) => panic!("unexpected attribute")
+
+        }
+    }
+    */
+    //let attrs = BindgenAttrs::find(&mut field.attrs)?;
+
+    //attrs.pass_to_derive(&mut field.attrs);
+    //println!("AAAA: {attrs:?}");
+
+    Ok(())
+}
+
 impl MacroParse<BindgenAttrs> for &mut syn::ItemImpl {
     fn macro_parse(self, program: &mut ast::Program, opts: BindgenAttrs) -> Result<(), Diagnostic> {
         if self.defaultness.is_some() {
@@ -1236,8 +1404,17 @@ impl MacroParse<BindgenAttrs> for &mut syn::ItemImpl {
                 "unsupported self type in #[wasm_bindgen] impl"
             ),
         };
+        let Type::Path(TypePath {path, ..}) = &*self.self_ty else {
+            panic!("wup");
+        };
+        let structtype = format!("{}", path.segments.first().unwrap().ident);
+        println!("Ident: {structtype}");
+        let dbg = &structtype == "Commitment";
         let mut errors = Vec::new();
         for item in self.items.iter_mut() {
+            if dbg {
+                println!("I: {item:?}");
+            }
             if let Err(e) = prepare_for_impl_recursion(item, name, program, &opts) {
                 errors.push(e);
             }
@@ -1811,7 +1988,7 @@ fn extract_first_ty_param(ty: Option<&syn::Type>) -> Result<Option<syn::Type>, D
 }
 
 /// Extract the documentation comments from a Vec of attributes
-fn extract_doc_comments(attrs: &[syn::Attribute]) -> Vec<String> {
+pub(crate) fn extract_doc_comments(attrs: &[syn::Attribute]) -> Vec<String> {
     attrs
         .iter()
         .filter_map(|a| {

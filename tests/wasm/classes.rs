@@ -481,6 +481,12 @@ fn renamed_field() {
 }
 
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
+pub struct ConditionalSkip {
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(skip))]
+    pub field: u32
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
 pub struct ConditionalBindings {}
 
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen)]

@@ -67,6 +67,8 @@ pub mod prelude {
     pub use wasm_bindgen_macro::__wasm_bindgen_class_marker;
     pub use wasm_bindgen_macro::wasm_bindgen;
 
+    pub use wasm_bindgen_macro::BindgenedStruct;
+
     pub use crate::JsError;
 }
 

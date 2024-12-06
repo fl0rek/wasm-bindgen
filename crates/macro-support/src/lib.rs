@@ -35,7 +35,7 @@ pub fn expand(attr: TokenStream, input: TokenStream) -> Result<TokenStream, Diag
     // If we successfully got here then we should have used up all attributes
     // and considered all of them to see if they were used. If one was forgotten
     // that's a bug on our end, so sanity check here.
-    parser::check_unused_attrs(&mut tokens);
+    //parser::check_unused_attrs(&mut tokens);
 
     Ok(tokens)
 }
@@ -167,4 +167,238 @@ impl Parse for ClassMarker {
                 .unwrap_or_else(|| syn::parse_quote! { wasm_bindgen_futures }),
         })
     }
+}
+
+pub fn expand_struct_marker(item: TokenStream) -> Result<TokenStream, Diagnostic> {
+    println!("II == {item}");
+
+    // TODO: let's make it work first
+    //parser::reset_attrs_used();
+
+    let mut tokens = proc_macro2::TokenStream::new();
+    let mut program = backend::ast::Program::default();
+
+    println!("pars");
+    let mut s : syn::ItemStruct = syn::parse2(item)?;
+    let opts = StructMarker::find(&mut s.attrs)?;
+    //println!("parsed s: {s:?}");
+    //let opts = BindgenAttrs::find(&mut s.attrs)?;
+
+    let ast_struct = convert_to_programs_ast(&program, s, opts)?;
+
+    //program.structs.push((&mut s).convert((&program, opts))?);
+    println!("postconvert");
+
+    program.structs.push(ast_struct);
+
+    program.try_to_tokens(&mut tokens)?;
+
+    // TODO: 
+    //parser::check_unused_attrs()
+
+    //println!("RES: {tokens:?}");
+
+    Ok(tokens)
+}
+
+struct StructMarker {
+    js_name: Option<String>,
+    is_inspectable: bool,
+    getter_with_clone: Option<Span>,
+    wasm_bindgen: Option<syn::Path>,
+}
+
+use syn::MacroDelimiter;
+
+impl StructMarker {
+    fn find(attrs: &mut Vec<syn::Attribute>) -> Result<Self, Diagnostic> {
+        let mut ret = StructMarker {
+            js_name: None,
+            is_inspectable: false,
+            getter_with_clone: None,
+            wasm_bindgen: None,
+        };
+        loop {
+            // TODO: disallow multiple
+            let pos = attrs
+                .iter()
+                .enumerate()
+                .find(|&(_, m)| m.path().segments[0].ident == "__wasm_bindgen_attrs")
+                .map(|a| a.0);
+            let pos = match pos {
+                Some(i) => i,
+                None => return Ok(ret),
+            };
+            let attr = attrs.remove(pos);
+
+            let tokens = match attr.meta {
+                syn::Meta::Path(_) => continue,
+                syn::Meta::List(syn::MetaList {
+                    delimiter: MacroDelimiter::Paren(_),
+                    tokens,
+                    ..
+                }) => tokens,
+                syn::Meta::List(_) | syn::Meta::NameValue(_) => {
+                    bail_span!(attr, "malformed #[wasm_bindgen] attribute")
+                }
+            };
+            //println!("tk: {tokens:#?}");
+            ret = syn::parse2(tokens)?;
+
+            //let m : syn::MetaNameValue = syn::parse2(tokens)?;
+            //println!("meta: {m:#?}");
+        }
+    }
+}
+
+impl Parse for StructMarker {
+    fn parse(input: ParseStream) -> SynResult<Self> {
+        let name = input.parse::<syn::LitStr>()?;
+        input.parse::<Token![,]>()?;
+        let is_inspectable = input.parse::<syn::LitBool>()?.value;
+        input.parse::<Token![,]>()?;
+        let getter_with_clone = input.parse::<syn::LitBool>()?;
+        input.parse::<Token![,]>()?;
+        let wasm_bindgen = input.parse::<syn::Ident>()?;
+        
+        let js_name = Some(name.value());
+        println!("nn: {js_name:?}");
+
+        Ok(StructMarker {
+            js_name: Some(name.value()),
+            is_inspectable,
+            getter_with_clone: if getter_with_clone.value {Some(getter_with_clone.span)} else { None },
+            wasm_bindgen : Some(wasm_bindgen.into()),
+        })
+    }
+}
+
+/*
+impl Parse for StructMarker {
+    fn parse(input: ParseStream) -> SynResult<Self> {
+        // XXX: not exactly, but works
+        let class = input.parse::<syn::Ident>()?;
+        input.parse::<Token![=]>()?;
+        let mut js_class = input.parse::<syn::LitStr>()?.value();
+        js_class = js_class
+            .strip_prefix("r#")
+            .map(String::from)
+            .unwrap_or(js_class);
+
+        let mut wasm_bindgen = None;
+        let mut is_inspectable = None;
+        let mut getter_with_clone = None;
+
+        loop {
+            if input.parse::<Option<Token![,]>>()?.is_some() {
+                let ident = input.parse::<syn::Ident>()?;
+
+                if ident == "wasm_bindgen" {
+                    if wasm_bindgen.is_some() {
+                        return Err(syn::Error::new(
+                            ident.span(),
+                            "found duplicate `wasm_bindgen`",
+                        ));
+                    }
+
+                    input.parse::<Token![=]>()?;
+                    wasm_bindgen = Some(input.parse::<syn::Path>()?);
+                } else if ident == "is_inspectable" {
+                    input.parse::<Token![=]>()?;
+                    is_inspectable = Some(input.parse::<syn::LitBool>()?.value);
+                } else if ident == "getter_with_clone" {
+                    input.parse::<Token![=]>()?;
+                    getter_with_clone = Some(input.parse::<syn::LitBool>()?.value);
+                } else {
+                    return Err(syn::Error::new(
+                        ident.span(),
+                        "expected `wasm_bindgen` or `wasm_bindgen_futures`",
+                    ));
+                }
+            } else {
+                break;
+            }
+        }
+
+        Ok(StructMarker {
+            js_class,
+            wasm_bindgen: wasm_bindgen.unwrap_or_else(|| syn::parse_quote! { wasm_bindgen }),
+            is_inspectable: is_inspectable.unwrap(),
+            getter_with_clone: getter_with_clone.unwrap(),
+        })
+    }
+}
+*/
+
+use crate::backend::ast;
+use crate::syn::ext::IdentExt;
+use crate::parser::extract_doc_comments;
+use proc_macro2::{Ident, Span};
+
+// TODO: pretended span for getter_with_clone
+fn convert_to_programs_ast(program: &ast::Program, mut s: syn::ItemStruct, opts: StructMarker/*js_name: String, is_inspectable: bool, getter_with_clone: Option<&Span>*/) -> Result<ast::Struct, Diagnostic> {
+
+    let js_name = opts.js_name.unwrap_or(s.ident.unraw().to_string());
+    let is_inspectable = opts.is_inspectable;
+    let getter_with_clone = opts.getter_with_clone;
+
+    let mut fields = Vec::new();
+
+    for (i, field) in s.fields.iter_mut().enumerate() {
+        match field.vis {
+            syn::Visibility::Public(..) => {}
+            _ => continue,
+        }
+        let (js_field_name, member) = match &field.ident {
+            Some(ident) => (ident.unraw().to_string(), syn::Member::Named(ident.clone())),
+            None => (i.to_string(), syn::Member::Unnamed(i.into())),
+        };
+
+        let attrs = BindgenAttrs::find_custom(&mut field.attrs, "__wasm_bindgen_attrs")?;
+        if attrs.skip().is_some() {
+            attrs.check_used();
+            continue;
+        }
+
+        let wasm_bindgen = &program.wasm_bindgen;
+
+        let js_field_name = match attrs.js_name() {
+            Some((name, _)) => name.to_string(),
+            None => js_field_name,
+        };
+
+        let comments = extract_doc_comments(&field.attrs);
+        let getter = shared::struct_field_get(&js_name, &js_field_name);
+        let setter = shared::struct_field_set(&js_name, &js_field_name);
+
+        fields.push(ast::StructField {
+            rust_name: member,
+            js_name: js_field_name,
+            struct_name: s.ident.clone(),
+            readonly: attrs.readonly().is_some(),
+            ty: field.ty.clone(),
+            getter: Ident::new(&getter, Span::call_site()),
+            setter: Ident::new(&setter, Span::call_site()),
+            comments,
+            generate_typescript: attrs.skip_typescript().is_none(),
+            generate_jsdoc: attrs.skip_jsdoc().is_none(),
+            getter_with_clone: attrs.getter_with_clone().or(getter_with_clone.as_ref()).copied(),
+            wasm_bindgen: program.wasm_bindgen.clone(),
+        });
+        attrs.check_used();
+    }
+    // TODO:  fix
+    let generate_typescript = false; // attrs.skip_typescript().is_none();
+    let comments: Vec<String> = extract_doc_comments(&s.attrs);
+    // TODO: uncomment
+    //attrs.check_used();
+    Ok(ast::Struct {
+        rust_name: s.ident.clone(),
+        js_name,
+        fields,
+        comments,
+        is_inspectable,
+        generate_typescript,
+        wasm_bindgen: program.wasm_bindgen.clone(),
+    })
 }
