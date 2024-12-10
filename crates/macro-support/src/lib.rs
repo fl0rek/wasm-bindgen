@@ -25,6 +25,46 @@ mod parser;
 pub fn expand(attr: TokenStream, input: TokenStream) -> Result<TokenStream, Diagnostic> {
     parser::reset_attrs_used();
     let item = syn::parse2::<syn::Item>(input)?;
+    if let syn::Item::Struct(mut s) = item {
+
+        s.attrs.insert(
+            0,
+            syn::Attribute {
+                pound_token: Default::default(),
+                style: syn::AttrStyle::Outer,
+                bracket_token: Default::default(),
+                meta: syn::parse_quote! {
+                    derive(wasm_bindgen::prelude::BindgenedStruct)
+                },
+            },
+        );
+        if !attr.is_empty() {
+
+            let meta: syn::Meta = syn::parse2(attr)?;
+            println!("MEEEta: {meta:?}");
+
+            let attr = syn::Attribute {
+                    pound_token: Default::default(),
+                    style: syn::AttrStyle::Outer,
+                    bracket_token: Default::default(),
+                    meta: syn::parse_quote! {
+                        wasm_bindgen(#meta)
+                    },
+                };
+
+            println!("Wouldhave {attr:?}");
+            s.attrs.insert(1 ,attr);
+        }
+
+        //println!("{s:#?}");
+
+        let mut tokens = proc_macro2::TokenStream::new();
+        s.to_tokens(&mut tokens);
+        println!("== STRUCT ==");
+        println!("{tokens}");
+        println!("== STRUCT ==");
+        return Ok(tokens);
+    }
     let opts = syn::parse2(attr)?;
 
     let mut tokens = proc_macro2::TokenStream::new();
@@ -178,13 +218,13 @@ pub fn expand_struct_marker(item: TokenStream) -> Result<TokenStream, Diagnostic
     let mut tokens = proc_macro2::TokenStream::new();
     let mut program = backend::ast::Program::default();
 
-    println!("pars");
-    let mut s : syn::ItemStruct = syn::parse2(item)?;
-    let opts = StructMarker::find(&mut s.attrs)?;
+    //println!("pars");
+    let mut s: syn::ItemStruct = syn::parse2(item)?;
+    //let opts = StructMarker::find(&mut s.attrs)?;
     //println!("parsed s: {s:?}");
     //let opts = BindgenAttrs::find(&mut s.attrs)?;
 
-    let ast_struct = convert_to_programs_ast(&program, s, opts)?;
+    let ast_struct = convert_to_programs_ast(&program, s)?;
 
     //program.structs.push((&mut s).convert((&program, opts))?);
     println!("postconvert");
@@ -193,12 +233,13 @@ pub fn expand_struct_marker(item: TokenStream) -> Result<TokenStream, Diagnostic
 
     program.try_to_tokens(&mut tokens)?;
 
-    // TODO: 
+    // TODO:
     //parser::check_unused_attrs()
 
-    //println!("RES: {tokens:?}");
+    println!("RES:\n {tokens}");
 
     Ok(tokens)
+    //Ok(Default::default())
 }
 
 struct StructMarker {
@@ -260,15 +301,19 @@ impl Parse for StructMarker {
         let getter_with_clone = input.parse::<syn::LitBool>()?;
         input.parse::<Token![,]>()?;
         let wasm_bindgen = input.parse::<syn::Ident>()?;
-        
+
         let js_name = Some(name.value());
         println!("nn: {js_name:?}");
 
         Ok(StructMarker {
             js_name: Some(name.value()),
             is_inspectable,
-            getter_with_clone: if getter_with_clone.value {Some(getter_with_clone.span)} else { None },
-            wasm_bindgen : Some(wasm_bindgen.into()),
+            getter_with_clone: if getter_with_clone.value {
+                Some(getter_with_clone.span)
+            } else {
+                None
+            },
+            wasm_bindgen: Some(wasm_bindgen.into()),
         })
     }
 }
@@ -331,16 +376,25 @@ impl Parse for StructMarker {
 */
 
 use crate::backend::ast;
-use crate::syn::ext::IdentExt;
 use crate::parser::extract_doc_comments;
+use crate::syn::ext::IdentExt;
 use proc_macro2::{Ident, Span};
 
 // TODO: pretended span for getter_with_clone
-fn convert_to_programs_ast(program: &ast::Program, mut s: syn::ItemStruct, opts: StructMarker/*js_name: String, is_inspectable: bool, getter_with_clone: Option<&Span>*/) -> Result<ast::Struct, Diagnostic> {
+fn convert_to_programs_ast(
+    program: &ast::Program,
+    mut s: syn::ItemStruct, /*opts: StructMarker*/ /*js_name: String, is_inspectable: bool, getter_with_clone: Option<&Span>*/
+) -> Result<ast::Struct, Diagnostic> {
+    let opts = BindgenAttrs::find(&mut s.attrs)?;
+    println!("ATTR: {:?}", s.attrs);
+    println!("OPTS: {opts:?}");
 
-    let js_name = opts.js_name.unwrap_or(s.ident.unraw().to_string());
-    let is_inspectable = opts.is_inspectable;
-    let getter_with_clone = opts.getter_with_clone;
+    let js_name = opts
+        .js_name()
+        .map(|s| s.0.to_string())
+        .unwrap_or(s.ident.unraw().to_string());
+    let is_inspectable = opts.inspectable().is_some();
+    let getter_with_clone = opts.getter_with_clone();
 
     let mut fields = Vec::new();
 
@@ -354,13 +408,14 @@ fn convert_to_programs_ast(program: &ast::Program, mut s: syn::ItemStruct, opts:
             None => (i.to_string(), syn::Member::Unnamed(i.into())),
         };
 
-        let attrs = BindgenAttrs::find_custom(&mut field.attrs, "__wasm_bindgen_attrs")?;
+        //let attrs = BindgenAttrs::find_custom(&mut field.attrs, "__wasm_bindgen_attrs")?;
+        let attrs = BindgenAttrs::find(&mut field.attrs)?;
         if attrs.skip().is_some() {
             attrs.check_used();
             continue;
         }
 
-        let wasm_bindgen = &program.wasm_bindgen;
+        //let wasm_bindgen = &program.wasm_bindgen;
 
         let js_field_name = match attrs.js_name() {
             Some((name, _)) => name.to_string(),
@@ -382,13 +437,13 @@ fn convert_to_programs_ast(program: &ast::Program, mut s: syn::ItemStruct, opts:
             comments,
             generate_typescript: attrs.skip_typescript().is_none(),
             generate_jsdoc: attrs.skip_jsdoc().is_none(),
-            getter_with_clone: attrs.getter_with_clone().or(getter_with_clone.as_ref()).copied(),
+            getter_with_clone: attrs.getter_with_clone().or(getter_with_clone).copied(),
             wasm_bindgen: program.wasm_bindgen.clone(),
         });
         attrs.check_used();
     }
-    // TODO:  fix
-    let generate_typescript = false; // attrs.skip_typescript().is_none();
+
+    let generate_typescript = opts.skip_typescript().is_none();
     let comments: Vec<String> = extract_doc_comments(&s.attrs);
     // TODO: uncomment
     //attrs.check_used();

@@ -13,7 +13,7 @@ use syn::ext::IdentExt;
 use syn::parse::{Parse, ParseStream, Result as SynResult};
 use syn::spanned::Spanned;
 use syn::visit_mut::VisitMut;
-use syn::{ItemFn, Lit, MacroDelimiter, ReturnType, Type, TypePath, Field};
+use syn::{Field, ItemFn, Lit, MacroDelimiter, ReturnType, Type, TypePath};
 
 use crate::ClassMarker;
 
@@ -214,7 +214,10 @@ impl BindgenAttrs {
     }
 
     /// Find and parse the wasm_bindgen attributes.
-    pub(crate) fn find_custom(attrs: &mut Vec<syn::Attribute>, bindgen_attr: &str) -> Result<BindgenAttrs, Diagnostic> {
+    pub(crate) fn find_custom(
+        attrs: &mut Vec<syn::Attribute>,
+        bindgen_attr: &str,
+    ) -> Result<BindgenAttrs, Diagnostic> {
         let mut ret = BindgenAttrs::default();
         loop {
             let pos = attrs
@@ -245,7 +248,7 @@ impl BindgenAttrs {
     }
 
     /*
-    fn pass_to_derive(self, attrs: &mut Vec<syn::Attribute>) { 
+    fn pass_to_derive(self, attrs: &mut Vec<syn::Attribute>) {
         for (_, attr) in self.attrs {
             match attr {
                 BindgenAttr::Getter(_, _) => todo!(),
@@ -256,7 +259,7 @@ impl BindgenAttrs {
                 BindgenAttr::Readonly(_) => todo!(),
                 BindgenAttr::JsName(_, _, _) => todo!(),
                 // these shouldn't happen in struct
-                BindgenAttr::Catch(..) | BindgenAttr::Constructor(..) | BindgenAttr::Method(..) | BindgenAttr::StaticMethodOf(..)  | BindgenAttr::JsNamespace(..) | BindgenAttr::Module(..) | BindgenAttr::RawModule(..) | BindgenAttr::InlineJs(..) => () 
+                BindgenAttr::Catch(..) | BindgenAttr::Constructor(..) | BindgenAttr::Method(..) | BindgenAttr::StaticMethodOf(..)  | BindgenAttr::JsNamespace(..) | BindgenAttr::Module(..) | BindgenAttr::RawModule(..) | BindgenAttr::InlineJs(..) => ()
             }
             println!("ATTTTTTT: {attr:?}");
         }
@@ -492,15 +495,15 @@ impl ConvertToAst<(&ast::Program, BindgenAttrs)> for &mut syn::ItemStruct {
             //let wasm_bindgen = &program.wasm_bindgen;
 
             /*
-    field.attrs.insert(
-        0,
-        syn::Attribute {
-            pound_token: Default::default(),
-            style: syn::AttrStyle::Outer,
-            bracket_token: Default::default(),
-            meta: syn::parse_quote! { #wasm_bindgen::prelude::__wasm_bindgen_class_marker() },
-        },
-    );*/
+            field.attrs.insert(
+                0,
+                syn::Attribute {
+                    pound_token: Default::default(),
+                    style: syn::AttrStyle::Outer,
+                    bracket_token: Default::default(),
+                    meta: syn::parse_quote! { #wasm_bindgen::prelude::__wasm_bindgen_class_marker() },
+                },
+            );*/
 
             let js_field_name = match attrs.js_name() {
                 Some((name, _)) => name.to_string(),
@@ -1203,16 +1206,15 @@ impl<'a> MacroParse<(Option<BindgenAttrs>, &'a mut TokenStream)> for syn::Item {
                 });
             }
             syn::Item::Struct(mut s) => {
-                println!("encountered struct");
                 let opts = opts.unwrap_or_default();
                 println!("preparse");
-                (&mut s).macro_parse(program, &opts).inspect_err(|e| println!("got E: {e:?}"))?;
+                (&mut s)
+                    .macro_parse(program, &opts)
+                    .inspect_err(|e| println!("got E: {e:?}"))?;
                 println!("preemit");
                 s.to_tokens(tokens);
-                println!("okie?");
             }
             syn::Item::Impl(mut i) => {
-                println!("encountered impl");
                 let opts = opts.unwrap_or_default();
                 (&mut i).macro_parse(program, opts)?;
                 i.to_tokens(tokens);
@@ -1251,9 +1253,12 @@ impl<'a> MacroParse<(Option<BindgenAttrs>, &'a mut TokenStream)> for syn::Item {
     }
 }
 
-
 impl MacroParse<&BindgenAttrs> for &mut syn::ItemStruct {
-    fn macro_parse(self, program: &mut ast::Program, attrs: &BindgenAttrs) -> Result<(), Diagnostic> {
+    fn macro_parse(
+        self,
+        program: &mut ast::Program,
+        attrs: &BindgenAttrs,
+    ) -> Result<(), Diagnostic> {
         if !self.generics.params.is_empty() {
             bail_span!(
                 self.generics,
@@ -1271,19 +1276,23 @@ impl MacroParse<&BindgenAttrs> for &mut syn::ItemStruct {
         let wasm_bindgen = &program.wasm_bindgen;
         //let wasm_bindgen_futures = &program.wasm_bindgen_futures;
 
-        self.attrs.insert(0, syn::Attribute {
-            pound_token: Default::default(),
-            style: syn::AttrStyle::Outer,
-            bracket_token: Default::default(),
-            meta: syn::parse_quote! { 
-                derive(#wasm_bindgen::prelude::BindgenedStruct)
-            }
-        });
+        self.attrs.insert(
+            0,
+            syn::Attribute {
+                pound_token: Default::default(),
+                style: syn::AttrStyle::Outer,
+                bracket_token: Default::default(),
+                meta: syn::parse_quote! {
+                    derive(#wasm_bindgen::prelude::BindgenedStruct)
+                },
+            },
+        );
+        /*
         self.attrs.insert(1, syn::Attribute {
             pound_token: Default::default(),
             style: syn::AttrStyle::Outer,
             bracket_token: Default::default(),
-            meta: syn::parse_quote! { 
+            meta: syn::parse_quote! {
                 __wasm_bindgen_attrs(#js_name, #is_inspectable, #getter_with_clone, #wasm_bindgen)
             }
         });
@@ -1295,7 +1304,8 @@ impl MacroParse<&BindgenAttrs> for &mut syn::ItemStruct {
             }
         }
         Diagnostic::from_vec(errors)?;
-            //meta: syn::parse_quote! { #wasm_bindgen::prelude::__wasm_bindgen_class_marker(#class = #js_class, wasm_bindgen = #wasm_bindgen, wasm_bindgen_futures = #wasm_bindgen_futures) },
+        */
+        //meta: syn::parse_quote! { #wasm_bindgen::prelude::__wasm_bindgen_class_marker(#class = #js_class, wasm_bindgen = #wasm_bindgen, wasm_bindgen_futures = #wasm_bindgen_futures) },
 
         //println!("RS: {self:#?}");
         Ok(())
@@ -1318,16 +1328,19 @@ impl syn::visit_mut::VisitMut for IdentRenameVisitor<'_> {
     fn visit_meta_list_mut(&mut self, node: &mut syn::MetaList) {
         self.visit_path_mut(&mut node.path);
         self.visit_macro_delimiter_mut(&mut node.delimiter);
-        
+
         let tokens = node.tokens.clone();
 
-        node.tokens = tokens.into_iter().map(|mut n| {
-            match &mut n {
-                TokenTree::Ident(ref mut i) => self.visit_ident_mut(i),
-                _ => ()
-            };
-            n
-        }).collect();
+        node.tokens = tokens
+            .into_iter()
+            .map(|mut n| {
+                match &mut n {
+                    TokenTree::Ident(ref mut i) => self.visit_ident_mut(i),
+                    _ => (),
+                };
+                n
+            })
+            .collect();
         //for token in &mut node.tokens { }
     }
 }
@@ -1337,9 +1350,12 @@ fn prepare_for_struct_recursion(field: &mut Field) -> Result<(), Diagnostic> {
     println!("> {:?}", field.attrs);
 
     for attr in &mut field.attrs {
-        IdentRenameVisitor { from: "wasm_bindgen", to: "__wasm_bindgen_attrs"}.visit_attribute_mut(attr);
+        IdentRenameVisitor {
+            from: "wasm_bindgen",
+            to: "__wasm_bindgen_attrs",
+        }
+        .visit_attribute_mut(attr);
     }
-
 
     /*
     for attr in &mut field.attrs {
@@ -1404,7 +1420,7 @@ impl MacroParse<BindgenAttrs> for &mut syn::ItemImpl {
                 "unsupported self type in #[wasm_bindgen] impl"
             ),
         };
-        let Type::Path(TypePath {path, ..}) = &*self.self_ty else {
+        let Type::Path(TypePath { path, .. }) = &*self.self_ty else {
             panic!("wup");
         };
         let structtype = format!("{}", path.segments.first().unwrap().ident);

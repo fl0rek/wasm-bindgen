@@ -72,7 +72,7 @@ pub fn __wasm_bindgen_class_marker(attr: TokenStream, input: TokenStream) -> Tok
     }
 }
 
-#[proc_macro_derive(BindgenedStruct, attributes(__wasm_bindgen_attrs))]
+#[proc_macro_derive(BindgenedStruct, attributes(wasm_bindgen))]
 //#[proc_macro_attribute]
 pub fn __wasm_bindgen_struct_marker(/*attr: TokenStream,*/ item: TokenStream) -> TokenStream {
     match wasm_bindgen_macro_support::expand_struct_marker(item.into()) {
